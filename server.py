@@ -16,10 +16,18 @@ Folder Explorer + PDF/Image Preview + Evaluation Checklist — server backend.
 সিলেক্ট করুন" বাটনটা আগের মতোই কাজ করবে (ব্রাউজারের File System Access
 API দিয়ে, শুধু Chrome/Edge, https:// বা localhost-এ)।
 
-কনফিগারেশন (ঐচ্ছিক, environment variable দিয়ে):
-    BROWSE_ROOT   কোন ফোল্ডারটা ব্রাউজ করা যাবে (ডিফল্ট: এই স্ক্রিপ্টের নিজের ফোল্ডার)
-    HOST          ডিফল্ট 0.0.0.0
-    PORT          ডিফল্ট 5000
+কনফিগারেশন (ঐচ্ছিক):
+    এই স্ক্রিপ্টের পাশে একটা ".env" ফাইল বানিয়ে সেখানে লিখুন
+    (উদাহরণ .env ফাইলটা আলাদাভাবে দেওয়া আছে):
+        PORT=8080
+        HOST=0.0.0.0
+        BROWSE_ROOT=/path/to/folder
+
+    অথবা environment variable দিয়েও দেওয়া যাবে (এটা .env-এর চেয়ে
+    অগ্রাধিকার পাবে):
+        BROWSE_ROOT   কোন ফোল্ডারটা ব্রাউজ করা যাবে (ডিফল্ট: এই স্ক্রিপ্টের নিজের ফোল্ডার)
+        HOST          ডিফল্ট 0.0.0.0
+        PORT          ডিফল্ট 5000
 
 নোট: /api/file এন্ডপয়েন্ট mimetypes.guess_type() দিয়ে যেকোনো ফাইলের
 (PDF, JPG, PNG, GIF, WEBP, SVG ইত্যাদি) সঠিক mimetype বের করে পাঠায়,
@@ -33,7 +41,33 @@ from pathlib import Path
 
 from flask import Flask, jsonify, request, send_from_directory, abort, Response
 
-BASE_DIR = Path(os.environ.get("BROWSE_ROOT", Path(__file__).resolve().parent)).resolve()
+SCRIPT_DIR = Path(__file__).resolve().parent
+
+
+def load_dotenv(path: Path) -> None:
+    """
+    ছোট্ট বিল্ট-ইন .env লোডার — কোনো external package (python-dotenv)
+    লাগবে না। .env ফাইলে KEY=VALUE লাইন থাকবে, # দিয়ে কমেন্ট করা যাবে।
+    আগে থেকে সেট করা environment variable-কে override করে না
+    (os.environ.setdefault ব্যবহার করা হয়েছে), তাই টার্মিনালে
+    "PORT=8080 python3 server.py" লিখে চালালে সেটাই আগে অগ্রাধিকার পাবে।
+    """
+    if not path.exists():
+        return
+    for raw_line in path.read_text(encoding="utf-8").splitlines():
+        line = raw_line.strip()
+        if not line or line.startswith("#") or "=" not in line:
+            continue
+        key, _, value = line.partition("=")
+        key = key.strip()
+        value = value.strip().strip('"').strip("'")
+        if key:
+            os.environ.setdefault(key, value)
+
+
+load_dotenv(SCRIPT_DIR / ".env")
+
+BASE_DIR = Path(os.environ.get("BROWSE_ROOT", SCRIPT_DIR)).resolve()
 HOST = os.environ.get("HOST", "0.0.0.0")
 PORT = int(os.environ.get("PORT", "5000"))
 

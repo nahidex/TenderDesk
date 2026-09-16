@@ -1,0 +1,1945 @@
+<!DOCTYPE html>
+<html lang="bn">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Folder Explorer + PDF/Image Preview + Evaluation Checklist</title>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js"></script>
+<style>
+  :root{
+    --bg:#0f1115;
+    --panel:#161922;
+    --panel2:#14161d;
+    --border:#262a35;
+    --text:#e6e8ee;
+    --muted:#8b91a1;
+    --accent:#5b8cff;
+    --accent-soft:rgba(91,140,255,0.15);
+    --danger:#ff6b6b;
+    --yes:#3ac47d;
+    --no:#ff6b6b;
+    --na:#8b91a1;
+  }
+  *{box-sizing:border-box;}
+  html,body{
+    margin:0;
+    height:100%;
+    background:var(--bg);
+    color:var(--text);
+    font-family:"Segoe UI", "Noto Sans Bengali", system-ui, -apple-system, sans-serif;
+  }
+  .app{
+    display:flex;
+    height:100vh;
+  }
+  /* ---------- LEFT: FILE TREE ---------- */
+  .sidebar{
+    width:280px;
+    min-width:200px;
+    max-width:50vw;
+    background:var(--panel);
+    display:flex;
+    flex-direction:column;
+    overflow:hidden;
+    transition:width 0.18s ease, min-width 0.18s ease;
+  }
+  .sidebar.collapsed{ width:0 !important; min-width:0 !important; }
+  body.no-transition .sidebar, body.no-transition .evalpanel{ transition:none; }
+
+  /* ---------- DRAGGABLE / COLLAPSIBLE RESIZER HANDLES ---------- */
+  .resizer{
+    width:6px;
+    flex-shrink:0;
+    background:var(--border);
+    cursor:col-resize;
+    position:relative;
+    z-index:15;
+  }
+  .resizer:hover, .resizer.dragging{ background:var(--accent); }
+  .resizer-toggle{
+    position:absolute;
+    top:50%;
+    transform:translateY(-50%);
+    left:50%;
+    margin-left:-11px;
+    width:22px;
+    height:46px;
+    background:var(--panel);
+    border:1px solid var(--border);
+    border-radius:5px;
+    display:flex;
+    align-items:center;
+    justify-content:center;
+    cursor:pointer;
+    font-size:11px;
+    color:var(--muted);
+    user-select:none;
+    z-index:16;
+  }
+  .resizer-toggle:hover{ color:var(--accent); border-color:var(--accent); }
+  .sidebar-header{
+    padding:14px 16px;
+    border-bottom:1px solid var(--border);
+  }
+  .sidebar-header h1{
+    font-size:14.5px;
+    margin:0 0 10px 0;
+    font-weight:600;
+    color:var(--text);
+  }
+  .btn{
+    width:100%;
+    padding:9px 12px;
+    background:var(--accent);
+    color:white;
+    border:none;
+    border-radius:7px;
+    font-size:13px;
+    cursor:pointer;
+    font-weight:600;
+  }
+  .btn:hover{filter:brightness(1.08);}
+  .btn.secondary{
+    background:transparent;
+    border:1px solid var(--border);
+    color:var(--text);
+    margin-top:8px;
+  }
+  .btn.small{
+    width:auto;
+    padding:5px 9px;
+    font-size:11.5px;
+    border-radius:6px;
+  }
+  .path-label{
+    margin-top:10px;
+    font-size:11px;
+    color:var(--muted);
+    word-break:break-all;
+  }
+  .search-box{
+    margin:10px 0 0 0;
+    width:100%;
+    padding:7px 10px;
+    background:var(--bg);
+    border:1px solid var(--border);
+    border-radius:6px;
+    color:var(--text);
+    font-size:12px;
+  }
+  .tree{
+    flex:1;
+    overflow:auto;
+    padding:8px 6px;
+  }
+  .node{ user-select:none; }
+  .row{
+    display:flex;
+    align-items:center;
+    gap:6px;
+    padding:5px 8px;
+    border-radius:6px;
+    cursor:pointer;
+    font-size:12.5px;
+    white-space:nowrap;
+  }
+  .row:hover{ background:rgba(255,255,255,0.04); }
+  .row.active{ background:var(--accent-soft); color:var(--accent); }
+  .row.folder .icon{ color:#e8b34e; }
+  .icon{ width:16px; text-align:center; flex-shrink:0; font-size:12.5px; }
+  .name{ overflow:hidden; text-overflow:ellipsis; }
+  .children{
+    margin-left:16px;
+    border-left:1px dashed var(--border);
+    padding-left:4px;
+  }
+  .empty-note{
+    padding:16px;
+    color:var(--muted);
+    font-size:12.5px;
+    line-height:1.6;
+  }
+  .warn{
+    background:rgba(255,107,107,0.1);
+    border:1px solid rgba(255,107,107,0.35);
+    color:var(--danger);
+    padding:10px 12px;
+    border-radius:8px;
+    font-size:11.5px;
+    margin:10px 16px 0 16px;
+    line-height:1.5;
+  }
+  /* ---------- CENTER: PDF/IMAGE VIEWER ---------- */
+  .viewer{
+    flex:1;
+    min-width:260px;
+    display:flex;
+    flex-direction:column;
+    background:#1a1c23;
+    min-width:0;
+  }
+  .viewer-header{
+    padding:12px 18px;
+    border-bottom:1px solid var(--border);
+    display:flex;
+    align-items:center;
+    justify-content:space-between;
+    gap:12px;
+  }
+  .viewer-title{
+    font-size:13.5px;
+    font-weight:600;
+    overflow:hidden;
+    text-overflow:ellipsis;
+    white-space:nowrap;
+  }
+  .viewer-sub{
+    font-size:11px;
+    color:var(--muted);
+    margin-top:2px;
+  }
+  .viewer-linked{
+    font-size:10.5px;
+    color:var(--yes);
+    margin-top:4px;
+  }
+  .viewer-actions a{
+    color:var(--accent);
+    font-size:12px;
+    text-decoration:none;
+    border:1px solid var(--border);
+    padding:6px 10px;
+    border-radius:6px;
+  }
+  .viewer-actions a:hover{ background:rgba(255,255,255,0.05); }
+  .viewer-body{ flex:1; position:relative; overflow:auto; }
+  iframe{ width:100%; height:100%; border:none; background:#2a2d36; }
+  .img-wrap{
+    height:100%;
+    display:flex;
+    align-items:center;
+    justify-content:center;
+    padding:16px;
+  }
+  .img-preview{
+    max-width:100%;
+    max-height:100%;
+    object-fit:contain;
+    border-radius:4px;
+    box-shadow:0 2px 20px rgba(0,0,0,0.4);
+  }
+  .placeholder{
+    height:100%;
+    display:flex;
+    align-items:center;
+    justify-content:center;
+    flex-direction:column;
+    gap:10px;
+    color:var(--muted);
+    text-align:center;
+    padding:20px;
+  }
+  .placeholder .big{ font-size:38px; }
+
+  /* ---------- RIGHT: EVALUATION PANEL ---------- */
+  .evalpanel{
+    width:520px;
+    min-width:340px;
+    max-width:65vw;
+    background:var(--panel2);
+    display:flex;
+    flex-direction:column;
+    overflow:hidden;
+    transition:width 0.18s ease, min-width 0.18s ease;
+  }
+  .evalpanel.collapsed{ width:0 !important; min-width:0 !important; }
+  .eval-toolbar{
+    padding:10px 14px;
+    border-bottom:1px solid var(--border);
+    display:flex;
+    gap:8px;
+    align-items:center;
+  }
+  .eval-toolbar .title{
+    font-size:13.5px;
+    font-weight:700;
+    flex:1;
+  }
+  .tabs{
+    display:flex;
+    border-bottom:1px solid var(--border);
+  }
+  .tab-btn{
+    flex:1;
+    padding:10px 6px;
+    text-align:center;
+    font-size:12px;
+    font-weight:600;
+    color:var(--muted);
+    background:transparent;
+    border:none;
+    border-bottom:2px solid transparent;
+    cursor:pointer;
+  }
+  .tab-btn.active{
+    color:var(--accent);
+    border-bottom:2px solid var(--accent);
+    background:rgba(91,140,255,0.06);
+  }
+  .tab-content{
+    flex:1;
+    overflow:auto;
+    display:none;
+  }
+  .tab-content.active{ display:block; }
+
+  .matrix-toolbar{
+    display:flex;
+    gap:8px;
+    padding:8px 10px;
+    border-bottom:1px solid var(--border);
+    position:sticky;
+    top:0;
+    background:var(--panel2);
+    z-index:5;
+  }
+
+  table.matrix{
+    border-collapse:collapse;
+    font-size:11.5px;
+    width:max-content;
+  }
+  table.matrix th, table.matrix td{
+    border:1px solid var(--border);
+    padding:0;
+  }
+  table.matrix th{
+    background:#1d2130;
+    color:var(--text);
+    font-size:11px;
+    font-weight:600;
+    padding:7px 8px;
+    position:sticky;
+    top:0;
+    z-index:3;
+    max-width:120px;
+  }
+  table.matrix th.corner{
+    left:0;
+    z-index:6;
+    position:sticky;
+  }
+  table.matrix td.rowlabel, table.matrix th.rowlabel-head{
+    position:sticky;
+    left:0;
+    background:#1d2130;
+    z-index:2;
+    text-align:left;
+    padding:7px 8px;
+    max-width:190px;
+    min-width:150px;
+    font-weight:600;
+    font-size:11.5px;
+  }
+  table.matrix td.rowlabel .sub{
+    display:block;
+    font-weight:400;
+    color:var(--muted);
+    font-size:10.5px;
+    margin-top:2px;
+    white-space:normal;
+  }
+  table.matrix .group-row td{
+    background:#232a3d;
+    color:#cfd6e6;
+    font-weight:700;
+    font-size:11.5px;
+    padding:6px 8px;
+    position:sticky;
+    left:0;
+  }
+  table.matrix td.cell{
+    text-align:center;
+    min-width:74px;
+  }
+  .del-btn{
+    background:none;
+    border:none;
+    color:var(--muted);
+    cursor:pointer;
+    font-size:12px;
+    margin-left:6px;
+  }
+  .del-btn:hover{ color:var(--danger); }
+  .add-link{
+    color:var(--accent);
+    font-size:11px;
+    cursor:pointer;
+    padding:6px 8px;
+    display:inline-block;
+  }
+  .add-link:hover{ text-decoration:underline; }
+
+  select.cell-select{
+    width:100%;
+    flex:1;
+    min-width:0;
+    border:none;
+    background:#2a2e3a;
+    color:var(--text);
+    padding:7px 4px;
+    font-size:11px;
+    cursor:pointer;
+    text-align:center;
+    text-align-last:center;
+    appearance:none;
+    -webkit-appearance:none;
+  }
+  .trace-btn{
+    display:none;
+    flex-shrink:0;
+    border:none;
+    background:transparent;
+    cursor:pointer;
+    font-size:11px;
+    padding:2px 3px;
+    line-height:1;
+  }
+  .trace-btn:hover{ transform:scale(1.15); }
+  select.cell-select[data-v="Yes"]{ background:rgba(58,196,125,0.22); color:var(--yes); font-weight:700; }
+  select.cell-select[data-v="No"]{ background:rgba(255,107,107,0.2); color:var(--no); font-weight:700; }
+  select.cell-select[data-v="N/A"]{ background:rgba(139,145,161,0.2); color:var(--na); font-weight:700; }
+
+  .save-note{
+    font-size:10.5px;
+    color:var(--muted);
+    padding:6px 12px;
+    border-top:1px solid var(--border);
+  }
+  .save-note.flash{ color:var(--yes); }
+
+  ::-webkit-scrollbar{ width:9px; height:9px; }
+  ::-webkit-scrollbar-thumb{ background:#2c303c; border-radius:6px; }
+
+  /* ---------- RIGHT PANEL: LIGHT THEME OVERRIDE ---------- */
+  .evalpanel{
+    background:#f7f8fa;
+    color:#1c1f26;
+    border-left:1px solid #dfe2e8;
+  }
+  .evalpanel .eval-toolbar{
+    background:#ffffff;
+    border-bottom:1px solid #e2e5ec;
+  }
+  .evalpanel .eval-toolbar .title{ color:#1c1f26; }
+  .evalpanel .btn.secondary{
+    background:#ffffff;
+    border:1px solid #d3d7e0;
+    color:#31353f;
+  }
+  .evalpanel .btn.secondary:hover{ background:#eef1f6; }
+  .evalpanel .tabs{
+    background:#ffffff;
+    border-bottom:1px solid #e2e5ec;
+  }
+  .evalpanel .tab-btn{ color:#6b7180; }
+  .evalpanel .tab-btn.active{
+    color:var(--accent);
+    background:rgba(91,140,255,0.08);
+    border-bottom:2px solid var(--accent);
+  }
+  .evalpanel .matrix-toolbar{
+    background:#f7f8fa;
+    border-bottom:1px solid #e2e5ec;
+  }
+  .evalpanel .add-link{ color:#2f5fd6; }
+  .evalpanel table.matrix th, .evalpanel table.matrix td{
+    border:1px solid #e2e5ec;
+  }
+  .evalpanel table.matrix th{
+    background:#eef1f6;
+    color:#1c1f26;
+  }
+  .evalpanel table.matrix td.rowlabel, .evalpanel table.matrix th.rowlabel-head{
+    background:#eef1f6;
+    color:#1c1f26;
+  }
+  .evalpanel table.matrix td.rowlabel .sub{ color:#6b7180; }
+  .evalpanel table.matrix .group-row td{
+    background:#dfe6f5;
+    color:#1e2a4a;
+  }
+  .evalpanel select.cell-select{
+    background:#ffffff;
+    color:#1c1f26;
+    border:1px solid #e2e5ec;
+  }
+  .evalpanel select.cell-select[data-v="Yes"]{ background:#e3f8ec; color:#1c8a52; }
+  .evalpanel select.cell-select[data-v="No"]{ background:#fdeaea; color:#d3453f; }
+  .evalpanel select.cell-select[data-v="N/A"]{ background:#eef0f3; color:#5a5f6b; }
+  .evalpanel .del-btn{ color:#9aa0ad; }
+  .evalpanel .del-btn:hover{ color:#d3453f; }
+  .evalpanel .save-note{
+    color:#6b7180;
+    border-top:1px solid #e2e5ec;
+    background:#ffffff;
+  }
+  .evalpanel .save-note.flash{ color:#1c8a52; }
+  .evalpanel ::-webkit-scrollbar-thumb{ background:#c7cbd4; }
+</style>
+</head>
+<body>
+
+<div class="app">
+  <!-- LEFT: FILE TREE -->
+  <div class="sidebar" id="sidebar">
+    <div class="sidebar-header">
+      <h1>📁 Folder Explorer</h1>
+      <button class="btn" id="pickBtn">🖥️ লোকাল ফোল্ডার সিলেক্ট করুন</button>
+      <button class="btn secondary" id="serverBtn">🌐 সার্ভার ফোল্ডার ব্রাউজ করুন</button>
+      <button class="btn secondary" id="reconnectBtn" style="display:none;">🔁 আগের ফোল্ডার রিকানেক্ট করুন</button>
+      <button class="btn secondary" id="refreshBtn" style="display:none;">🔄 রিফ্রেশ</button>
+      <div class="path-label" id="pathLabel"></div>
+      <input type="text" class="search-box" id="searchBox" placeholder="ফাইল খুঁজুন..." style="display:none;">
+    </div>
+    <div class="tree" id="tree">
+      <div class="empty-note" id="emptyNote">
+        🖥️ <b>লোকাল ফোল্ডার সিলেক্ট করুন</b> — আপনার নিজের কম্পিউটারের যেকোনো ফোল্ডার ব্রাউজ করতে (শুধু Chrome/Edge, https:// বা localhost লাগবে)।<br><br>
+        🌐 <b>সার্ভার ফোল্ডার ব্রাউজ করুন</b> — এই পেজটা যেই সার্ভার থেকে চলছে (IP দিয়ে অ্যাক্সেস করলেও), সেই সার্ভারের ফোল্ডার ব্রাউজ করতে। এর জন্য server.py (Flask) চালু থাকতে হবে।<br><br>
+        PDF বা ছবি (JPG/PNG/GIF/WEBP/SVG) ফাইলে ক্লিক করলে মাঝখানে প্রিভিউ দেখাবে। ডান পাশে ইভ্যালুয়েশন চেকলিস্ট থাকবে।
+      </div>
+    </div>
+    <div class="warn" id="browserWarn" style="display:none;">
+      ⚠️ শুধু Chrome/Edge-এ কাজ করে, পেজ অবশ্যই https:// বা localhost থেকে লোড হতে হবে (file:// থেকে নয়)।
+    </div>
+  </div>
+
+  <!-- LEFT RESIZER / COLLAPSE HANDLE -->
+  <div class="resizer" id="resizerLeft">
+    <div class="resizer-toggle" id="toggleLeft" title="সাইডবার লুকান/দেখান">◀</div>
+  </div>
+
+  <!-- CENTER: PDF/IMAGE VIEWER -->
+  <div class="viewer">
+    <div class="viewer-header">
+      <div>
+        <div class="viewer-title" id="viewerTitle">কোনো ফাইল সিলেক্ট করা হয়নি</div>
+        <div class="viewer-sub" id="viewerSub">বাম দিক থেকে একটি .pdf বা ছবি ফাইল বেছে নিন</div>
+        <div class="viewer-linked" id="viewerLinked"></div>
+      </div>
+      <div class="viewer-actions">
+        <a id="downloadLink" href="#" download style="display:none;">⬇️ Download</a>
+      </div>
+    </div>
+    <div class="viewer-body" id="viewerBody">
+      <div class="placeholder">
+        <div class="big">📄</div>
+        <div>PDF / ছবি প্রিভিউ এখানে দেখাবে</div>
+      </div>
+    </div>
+  </div>
+
+  <!-- RIGHT RESIZER / COLLAPSE HANDLE -->
+  <div class="resizer" id="resizerRight">
+    <div class="resizer-toggle" id="toggleRight" title="ইভ্যালুয়েশন প্যানেল লুকান/দেখান">▶</div>
+  </div>
+
+  <!-- RIGHT: EVALUATION PANEL -->
+  <div class="evalpanel" id="evalpanel">
+    <div class="eval-toolbar">
+      <div class="title">✅ Evaluation Checklist</div>
+      <button class="btn small secondary" id="sampleXlsxBtn">📋 Sample Excel</button>
+      <button class="btn small secondary" id="importXlsxBtn">📥 Import Excel</button>
+      <input type="file" id="importFileInput" accept=".xlsx,.xls" style="display:none;">
+      <button class="btn small secondary" id="addCompanyBtn">+ কোম্পানি</button>
+      <button class="btn small secondary" id="exportCsvBtn">📄 CSV</button>
+      <button class="btn small secondary" id="exportXlsxBtn">📊 Excel</button>
+      <button class="btn small secondary" id="resetBtn" style="color:var(--danger);">Reset</button>
+    </div>
+    <div class="tabs">
+      <button class="tab-btn active" data-tab="tab1">১. Submission Checklist</button>
+      <button class="tab-btn" data-tab="tab2">২. Document Checklist</button>
+      <button class="tab-btn" data-tab="tab3">৩. Technical Compliance</button>
+    </div>
+
+    <div class="tab-content active" id="tab1">
+      <div class="matrix-toolbar">
+        <span class="add-link" id="addFormRow">+ ফর্ম/ডকুমেন্ট সারি যোগ করুন</span>
+      </div>
+      <div id="tab1Wrap"></div>
+    </div>
+
+    <div class="tab-content" id="tab2">
+      <div class="matrix-toolbar">
+        <span class="add-link" id="addDocCol">+ ডকুমেন্ট কলাম যোগ করুন</span>
+      </div>
+      <div id="tab2Wrap"></div>
+    </div>
+
+    <div class="tab-content" id="tab3">
+      <div class="matrix-toolbar">
+        <span class="add-link" id="addGroup">+ প্রোডাক্ট গ্রুপ যোগ করুন</span>
+      </div>
+      <div id="tab3Wrap"></div>
+    </div>
+
+    <div class="save-note" id="saveNote">সব পরিবর্তন স্বয়ংক্রিয়ভাবে লোকাল স্টোরেজে সেভ হয়</div>
+  </div>
+</div>
+
+<script>
+/* ========================= FILE TREE + PDF/IMAGE PREVIEW ========================= */
+const pickBtn = document.getElementById('pickBtn');
+const serverBtn = document.getElementById('serverBtn');
+const refreshBtn = document.getElementById('refreshBtn');
+const treeEl = document.getElementById('tree');
+const pathLabel = document.getElementById('pathLabel');
+const searchBox = document.getElementById('searchBox');
+const browserWarn = document.getElementById('browserWarn');
+const viewerTitle = document.getElementById('viewerTitle');
+const viewerSub = document.getElementById('viewerSub');
+const viewerBody = document.getElementById('viewerBody');
+const downloadLink = document.getElementById('downloadLink');
+
+let rootHandle = null;
+let currentObjectUrl = null;
+let activeRowEl = null;
+let currentFilePath = null;   // array of path segments (relative to root) of the file currently open in the viewer
+let currentFileName = null;
+let currentMode = null;       // 'local' (File System Access API) | 'server' (Flask /api/list, /api/file)
+const SERVER_API_BASE = '';   // same-origin; server.py serves /api/list and /api/file next to index.html
+
+/* Image extensions that get an inline <img> preview, same as PDFs get an <iframe> preview. */
+const IMAGE_EXTS = ['jpg','jpeg','png','gif','webp','bmp','svg'];
+
+/* ---- IndexedDB: remember the picked folder handle across browser sessions ---- */
+const IDB_NAME = 'folderExplorerDB';
+const IDB_STORE = 'handles';
+function idbOpen() {
+  return new Promise((resolve, reject) => {
+    const req = indexedDB.open(IDB_NAME, 1);
+    req.onupgradeneeded = () => { req.result.createObjectStore(IDB_STORE); };
+    req.onsuccess = () => resolve(req.result);
+    req.onerror = () => reject(req.error);
+  });
+}
+async function idbSet(key, value) {
+  try {
+    const db = await idbOpen();
+    return new Promise((resolve, reject) => {
+      const tx = db.transaction(IDB_STORE, 'readwrite');
+      tx.objectStore(IDB_STORE).put(value, key);
+      tx.oncomplete = () => resolve();
+      tx.onerror = () => reject(tx.error);
+    });
+  } catch (e) { /* IndexedDB unavailable - silently skip */ }
+}
+async function idbGet(key) {
+  try {
+    const db = await idbOpen();
+    return new Promise((resolve, reject) => {
+      const tx = db.transaction(IDB_STORE, 'readonly');
+      const req = tx.objectStore(IDB_STORE).get(key);
+      req.onsuccess = () => resolve(req.result);
+      req.onerror = () => reject(req.error);
+    });
+  } catch (e) { return undefined; }
+}
+
+if (!('showDirectoryPicker' in window)) {
+  browserWarn.style.display = 'block';
+  pickBtn.disabled = true;
+  pickBtn.textContent = 'এই ব্রাউজারে সাপোর্ট নেই';
+  pickBtn.style.opacity = '0.5';
+}
+
+pickBtn.addEventListener('click', async () => {
+  try {
+    rootHandle = await window.showDirectoryPicker();
+    currentMode = 'local';
+    pathLabel.textContent = '🖥️ ' + rootHandle.name;
+    refreshBtn.style.display = 'block';
+    searchBox.style.display = 'block';
+    searchBox.value = '';
+    reconnectBtn.style.display = 'none';
+    await renderTree();
+    idbSet('root', rootHandle);
+  } catch (err) {
+    if (err.name !== 'AbortError') alert('ফোল্ডার খুলতে সমস্যা: ' + err.message);
+  }
+});
+
+serverBtn.addEventListener('click', async () => {
+  try {
+    const test = await fetch(SERVER_API_BASE + '/api/list?path=', { cache: 'no-store' });
+    if (!test.ok) throw new Error('HTTP ' + test.status);
+    await test.json();
+  } catch (err) {
+    alert('সার্ভার API (/api/list) পাওয়া যায়নি।\n\nএই মোড কাজ করতে হলে index.html-কে Flask সার্ভার (server.py) দিয়ে চালাতে হবে, শুধু "python -m http.server" দিয়ে চলবে না।\n\nচালানোর নিয়ম:\n  python3 server.py\n\nতারপর http://<আপনার-আইপি>:5000 দিয়ে অ্যাক্সেস করুন।\n\n(টেকনিক্যাল এরর: ' + err.message + ')');
+    return;
+  }
+  rootHandle = null;
+  currentMode = 'server';
+  pathLabel.textContent = '🌐 সার্ভার: ' + window.location.host + '/';
+  refreshBtn.style.display = 'block';
+  searchBox.style.display = 'block';
+  searchBox.value = '';
+  reconnectBtn.style.display = 'none';
+  await renderTree();
+});
+
+refreshBtn.addEventListener('click', renderTree);
+searchBox.addEventListener('input', () => filterTree(treeEl, searchBox.value.trim().toLowerCase()));
+
+/* On load, check whether a folder was picked before — offer to reconnect so 🔗 trace links keep working */
+const reconnectBtn = document.getElementById('reconnectBtn');
+(async () => {
+  const saved = await idbGet('root');
+  if (saved) {
+    reconnectBtn.style.display = 'block';
+    reconnectBtn.addEventListener('click', async () => {
+      try {
+        const perm = await saved.requestPermission({ mode: 'read' });
+        if (perm !== 'granted') { alert('অনুমতি দেওয়া হয়নি।'); return; }
+        rootHandle = saved;
+        pathLabel.textContent = '📂 ' + rootHandle.name;
+        refreshBtn.style.display = 'block';
+        searchBox.style.display = 'block';
+        reconnectBtn.style.display = 'none';
+        await renderTree();
+      } catch (err) {
+        alert('আগের ফোল্ডার রিকানেক্ট করা যায়নি: ' + err.message + '\nনতুন করে ফোল্ডার সিলেক্ট করুন।');
+      }
+    });
+  }
+})();
+
+function filterTree(container, q) {
+  let any = false;
+  container.querySelectorAll(':scope > .node').forEach(node => {
+    const row = node.querySelector(':scope > .row');
+    const isFolder = row.classList.contains('folder');
+    const name = row.querySelector('.name').textContent.toLowerCase();
+    const childrenWrap = node.querySelector(':scope > .children');
+    let childMatch = childrenWrap ? filterTree(childrenWrap, q) : false;
+    const visible = !q || name.includes(q) || childMatch;
+    node.style.display = visible ? '' : 'none';
+    if (visible && isFolder && childrenWrap && q && childMatch) {
+      childrenWrap.style.display = 'block';
+      const c = row.querySelector('.caret'); if (c) c.textContent = '▾';
+    }
+    if (visible) any = true;
+  });
+  return any;
+}
+
+/* ---- Unified entry descriptor across both modes ----
+   Local:  { kind:'directory'|'file', name, mode:'local', handle }
+   Server: { kind:'directory'|'file', name, mode:'server', relPath, size? } */
+
+async function renderTree() {
+  treeEl.innerHTML = '';
+  if (currentMode === 'local') {
+    if (!rootHandle) return;
+    treeEl.appendChild(await buildNode({ kind:'directory', name: rootHandle.name, mode:'local', handle: rootHandle }));
+  } else if (currentMode === 'server') {
+    treeEl.appendChild(await buildNode({ kind:'directory', name: window.location.host, mode:'server', relPath:'' }));
+  }
+}
+
+/* Ask the server for the immediate children of a relative path. Returns sorted entry descriptors. */
+async function listServerDir(relPath) {
+  const res = await fetch(SERVER_API_BASE + '/api/list?path=' + encodeURIComponent(relPath), { cache: 'no-store' });
+  if (!res.ok) throw new Error('সার্ভার এরর (HTTP ' + res.status + ')');
+  const data = await res.json();
+  const entries = [];
+  (data.folders || []).forEach(name => entries.push({
+    kind: 'directory', name, mode: 'server',
+    relPath: relPath ? relPath + '/' + name : name
+  }));
+  (data.files || []).forEach(f => entries.push({
+    kind: 'file', name: f.name, mode: 'server', size: f.size,
+    relPath: relPath ? relPath + '/' + f.name : f.name
+  }));
+  return entries;
+}
+
+async function buildNode(entry) {
+  const node = document.createElement('div');
+  node.className = 'node';
+  const row = document.createElement('div');
+  row.className = 'row ' + (entry.kind === 'directory' ? 'folder' : 'file');
+  const icon = document.createElement('span');
+  icon.className = 'icon';
+  if (entry.kind === 'directory') {
+    const caret = document.createElement('span');
+    caret.className = 'caret';
+    caret.textContent = '▸';
+    caret.style.width = '10px'; caret.style.fontSize = '10px'; caret.style.color = 'var(--muted)';
+    row.appendChild(caret);
+    icon.textContent = '📁';
+  } else {
+    const lname = entry.name.toLowerCase();
+    icon.textContent = lname.endsWith('.pdf') ? '📕' : (IMAGE_EXTS.some(e => lname.endsWith('.' + e)) ? '🖼️' : '📄');
+  }
+  row.appendChild(icon);
+  const nameEl = document.createElement('span');
+  nameEl.className = 'name';
+  nameEl.textContent = entry.name;
+  row.appendChild(nameEl);
+  node.appendChild(row);
+
+  if (entry.kind === 'directory') {
+    const childrenWrap = document.createElement('div');
+    childrenWrap.className = 'children';
+    childrenWrap.style.display = 'none';
+    node.appendChild(childrenWrap);
+    let loaded = false;
+    row.addEventListener('click', async () => {
+      const caret = row.querySelector('.caret');
+      const isOpen = childrenWrap.style.display === 'block';
+      if (isOpen) { childrenWrap.style.display = 'none'; caret.textContent = '▸'; }
+      else {
+        if (!loaded) {
+          try {
+            await populateChildren(entry, childrenWrap);
+            loaded = true;
+          } catch (err) {
+            childrenWrap.innerHTML = `<div class="empty-note">⚠️ লোড করতে সমস্যা: ${err.message}</div>`;
+          }
+        }
+        childrenWrap.style.display = 'block'; caret.textContent = '▾';
+      }
+    });
+  } else {
+    row.addEventListener('click', async () => {
+      if (activeRowEl) activeRowEl.classList.remove('active');
+      row.classList.add('active'); activeRowEl = row;
+      await openFile(entry);
+    });
+  }
+  return node;
+}
+
+async function populateChildren(dirEntry, container) {
+  let entries;
+  if (dirEntry.mode === 'local') {
+    entries = [];
+    for await (const child of dirEntry.handle.values()) {
+      entries.push({
+        kind: child.kind, name: child.name, mode: 'local', handle: child
+      });
+    }
+  } else {
+    entries = await listServerDir(dirEntry.relPath);
+  }
+  entries.sort((a, b) => {
+    if (a.kind !== b.kind) return a.kind === 'directory' ? -1 : 1;
+    return a.name.localeCompare(b.name, undefined, {numeric:true, sensitivity:'base'});
+  });
+  for (const entry of entries) container.appendChild(await buildNode(entry));
+}
+
+async function openFile(entry) {
+  const ext = entry.name.split('.').pop().toLowerCase();
+  const isPdf = ext === 'pdf';
+  const isImage = IMAGE_EXTS.includes(ext);
+
+  if (!isPdf && !isImage) {
+    viewerTitle.textContent = entry.name;
+    viewerSub.textContent = 'শুধুমাত্র PDF/ছবি ফাইল প্রিভিউ করা যায়';
+    downloadLink.style.display = 'none';
+    if (currentObjectUrl) { URL.revokeObjectURL(currentObjectUrl); currentObjectUrl = null; }
+    currentFilePath = null; currentFileName = null;
+    viewerBody.innerHTML = `<div class="placeholder"><div class="big">📄</div><div>এই ফাইল টাইপের প্রিভিউ সাপোর্ট করা হয়নি</div></div>`;
+    return;
+  }
+
+  if (entry.mode === 'local') {
+    if (isPdf) await openLocalFile(entry.handle);
+    else await openLocalImage(entry.handle);
+  } else {
+    if (isPdf) await openServerFile(entry.relPath, entry.name);
+    else await openServerImage(entry.relPath, entry.name);
+  }
+}
+
+async function openLocalFile(fileHandle) {
+  try {
+    const file = await fileHandle.getFile();
+    if (currentObjectUrl) URL.revokeObjectURL(currentObjectUrl);
+    currentObjectUrl = URL.createObjectURL(file);
+    viewerTitle.textContent = file.name;
+    viewerSub.textContent = formatSize(file.size) + ' • PDF (লোকাল)';
+    downloadLink.href = currentObjectUrl; downloadLink.download = file.name; downloadLink.style.display = 'inline-block';
+    viewerBody.innerHTML = '';
+    const iframe = document.createElement('iframe');
+    iframe.src = currentObjectUrl;
+    viewerBody.appendChild(iframe);
+
+    /* Remember which file (relative to the root folder) is currently open, so the eval
+       panel can tag any Yes/No/N/A choice with a link back to this exact file. */
+    currentFileName = file.name;
+    currentFilePath = null;
+    if (rootHandle) {
+      try {
+        const rel = await rootHandle.resolve(fileHandle);
+        if (rel) currentFilePath = rel;
+      } catch (e) { currentFilePath = null; }
+    }
+    updateNowViewingBadge();
+  } catch (err) {
+    viewerBody.innerHTML = `<div class="placeholder"><div class="big">⚠️</div><div>ফাইল লোড করতে সমস্যা: ${err.message}</div></div>`;
+  }
+}
+
+async function openLocalImage(fileHandle) {
+  try {
+    const file = await fileHandle.getFile();
+    if (currentObjectUrl) URL.revokeObjectURL(currentObjectUrl);
+    currentObjectUrl = URL.createObjectURL(file);
+    viewerTitle.textContent = file.name;
+    viewerSub.textContent = formatSize(file.size) + ' • Image (লোকাল)';
+    downloadLink.href = currentObjectUrl; downloadLink.download = file.name; downloadLink.style.display = 'inline-block';
+
+    viewerBody.innerHTML = '';
+    const wrap = document.createElement('div');
+    wrap.className = 'img-wrap';
+    const img = document.createElement('img');
+    img.className = 'img-preview';
+    img.src = currentObjectUrl;
+    img.alt = file.name;
+    wrap.appendChild(img);
+    viewerBody.appendChild(wrap);
+
+    currentFileName = file.name;
+    currentFilePath = null;
+    if (rootHandle) {
+      try {
+        const rel = await rootHandle.resolve(fileHandle);
+        if (rel) currentFilePath = rel;
+      } catch (e) { currentFilePath = null; }
+    }
+    updateNowViewingBadge();
+  } catch (err) {
+    viewerBody.innerHTML = `<div class="placeholder"><div class="big">⚠️</div><div>ছবি লোড করতে সমস্যা: ${err.message}</div></div>`;
+  }
+}
+
+async function openServerFile(relPath, name) {
+  if (currentObjectUrl) { URL.revokeObjectURL(currentObjectUrl); currentObjectUrl = null; }
+  const fileUrl = SERVER_API_BASE + '/api/file?path=' + encodeURIComponent(relPath);
+  viewerTitle.textContent = name;
+  viewerSub.textContent = 'PDF (সার্ভার)';
+  downloadLink.href = fileUrl + '&download=1';
+  downloadLink.removeAttribute('download'); // let server's Content-Disposition decide the filename
+  downloadLink.style.display = 'inline-block';
+  viewerBody.innerHTML = '';
+  const iframe = document.createElement('iframe');
+  iframe.src = fileUrl;
+  viewerBody.appendChild(iframe);
+
+  currentFileName = name;
+  currentFilePath = relPath.split('/').filter(Boolean);
+  updateNowViewingBadge();
+}
+
+async function openServerImage(relPath, name) {
+  if (currentObjectUrl) { URL.revokeObjectURL(currentObjectUrl); currentObjectUrl = null; }
+  const fileUrl = SERVER_API_BASE + '/api/file?path=' + encodeURIComponent(relPath);
+  viewerTitle.textContent = name;
+  viewerSub.textContent = 'Image (সার্ভার)';
+  downloadLink.href = fileUrl + '&download=1';
+  downloadLink.removeAttribute('download');
+  downloadLink.style.display = 'inline-block';
+
+  viewerBody.innerHTML = '';
+  const wrap = document.createElement('div');
+  wrap.className = 'img-wrap';
+  const img = document.createElement('img');
+  img.className = 'img-preview';
+  img.src = fileUrl;
+  img.alt = name;
+  wrap.appendChild(img);
+  viewerBody.appendChild(wrap);
+
+  currentFileName = name;
+  currentFilePath = relPath.split('/').filter(Boolean);
+  updateNowViewingBadge();
+}
+
+function formatSize(bytes) {
+  if (bytes < 1024) return bytes + ' B';
+  if (bytes < 1024*1024) return (bytes/1024).toFixed(1) + ' KB';
+  return (bytes/(1024*1024)).toFixed(1) + ' MB';
+}
+function updateNowViewingBadge() {
+  const badge = document.getElementById('viewerLinked');
+  if (!badge) return;
+  if (currentFilePath) {
+    badge.textContent = '🔗 এখন ডান পাশে যেই Yes/No/N/A সিলেক্ট করবেন, তা এই ফাইলের সাথে লিংক হয়ে সেভ হবে';
+  } else {
+    badge.textContent = '';
+  }
+}
+
+/* ========================= EVALUATION PANEL ========================= */
+const STORAGE_KEY = 'tenderEvalChecklist_v1';
+let uidCounter = 1000;
+const newId = (prefix) => prefix + '_' + (uidCounter++);
+
+function defaultState() {
+  const companies = [
+    'Computer Point','F FIVE COMMUNICATIONS','Hannan & Brothers','Hazi Traders',
+    'LIVING EARTH TECHNOLOGY','M/S MANIK TRADERS','M/s. Azim Enterprise',
+    'MA BABA DUA ENTERPRISE','Omar and Brothers','POWER IT SOURCES',
+    'Powerline Computer','Rahman Corporation','SAFE ICT','Shakil Enterprise','Z S Technologies'
+  ].map((name, i) => ({ id: 'co' + (i+1), name }));
+
+  const tab1Rows = [
+    { id:'f1', label:'e-Tender Submission Letter (Form e-PG2-1)' },
+    { id:'f2', label:'Tenderer Information Form (e-PG2-2) - Part 1' },
+    { id:'f3', label:'Tenderer Information Form (e-PG2-2) - Part 2' },
+    { id:'f4', label:'Technical Specifications and Compliance of Goods and related services (Form e-PG2-4)' }
+  ];
+
+  const tab2Cols = [
+    { id:'d1', label:'General Experience Certificates (7yrs min)' },
+    { id:'d2', label:'Specific Experience Certificates (1 contract 5yrs, 10.5lakhs)' },
+    { id:'d3', label:'Supply/Production Capacity Certificate (ITT 15.1(c))' },
+    { id:'d4', label:'Valid Trade License' },
+    { id:'d5', label:'TIN Certificate' },
+    { id:'d6', label:'Tax Ackl Slip (2024-2025)' },
+    { id:'d7', label:'VAT/BIN Certificate' },
+    { id:'d8', label:'Financial Capacity Certificate (ITT 16.1(a), Liquid Asset, 12 lakh)' },
+    { id:'d9', label:'Litigation Certification Letter with Letterhead Pad' },
+    { id:'d10', label:'Tender security 37,500Tk' },
+    { id:'d11', label:'Brochures' },
+    { id:'d12', label:'Manufacturer Authorization/Dealership/Agency ship Certificate' }
+  ];
+
+  const tab3Groups = [
+    { id:'g1', product:'Desktop Computer (CPU+MONITOR)', items:[
+      {id:'g1i1', label:'Brand & Origin', detail:'Any International Reputed Brand (Brand/Model/Country of Origin to be mentioned by bidder)'},
+      {id:'g1i2', label:'Processor', detail:'Intel Core i5-14500 (14th Gen, 14 Cores, 20 Threads, 65W)'},
+      {id:'g1i3', label:'Motherboard', detail:'Intel H770 Chipset'},
+      {id:'g1i4', label:'RAM', detail:'8 GB DDR5 5600 MHz (1x8GB; 2 DIMM slots, expandable up to 128GB)'},
+      {id:'g1i5', label:'Storage', detail:'Dual Storage: 512GB M.2 PCIe NVMe SSD + 2TB 7200rpm SATA HDD'},
+      {id:'g1i6', label:'Operating System', detail:'Genuine Windows 11 Pro (Official License)'},
+      {id:'g1i7', label:'Included Software', detail:'Genuine Microsoft Office 2021 (Official Lifetime License)'},
+      {id:'g1i8', label:'Networking & Connectivity', detail:'1GbE Ethernet (RJ-45), Wi-Fi 6 (802.11ax 2x2), Bluetooth 4.2'},
+      {id:'g1i9', label:'Warranty', detail:'Minimum 3-Year International Warranty'},
+      {id:'g1i10', label:'Display Size & Panel', detail:'21.5-inch IPS LED Panel (Anti-glare, 16:9 Aspect Ratio)'},
+      {id:'g1i11', label:'Resolution', detail:'Full HD (1920 x 1080)'},
+      {id:'g1i12', label:'Ports', detail:'1x HDMI 1.4, 1x VGA'},
+      {id:'g1i13', label:'Warranty', detail:'3-Year Warranty'}
+    ]},
+    { id:'g2', product:'Duplex Printer', items:[
+      {id:'g2i1', label:'Brand & Origin', detail:'Any International Reputed Brand (Brand/Model/Country of Origin to be mentioned by bidder)'},
+      {id:'g2i2', label:'Printer Type & Function', detail:'Single Function Mono Laser (Print Only)'},
+      {id:'g2i3', label:'Print Speed', detail:'40 PPM (Black)'},
+      {id:'g2i4', label:'Print Resolution', detail:'1200 x 1200 dpi'},
+      {id:'g2i5', label:'Duplex Printing', detail:'Automatic'},
+      {id:'g2i6', label:'Monthly Duty Cycle', detail:'Up to 80,000 Pages'},
+      {id:'g2i7', label:'Connectivity', detail:'USB, LAN (Ethernet), Wi-Fi'},
+      {id:'g2i8', label:'Warranty', detail:'Minimum 1-Year Official Warranty'}
+    ]},
+    { id:'g3', product:'Duplex Scanner', items:[
+      {id:'g3i1', label:'Brand & Origin', detail:'Any International Reputed Brand (Brand/Model/Country of Origin to be mentioned by bidder)'},
+      {id:'g3i2', label:'Scanner Type', detail:'Flatbed with Automatic Document Feeder (ADF)'},
+      {id:'g3i3', label:'Scanning Mode', detail:'Single-pass Duplex Scanning'},
+      {id:'g3i4', label:'Scan Speed', detail:'Up to 25 ppm / 50 ipm (Black & White, Gray, and Color @ 300 dpi)'},
+      {id:'g3i5', label:'Connectivity', detail:'USB 2.0'},
+      {id:'g3i6', label:'Warranty', detail:'1-Year Official Warranty'}
+    ]},
+    { id:'g4', product:'Portable Hard Drive (2TB)', items:[
+      {id:'g4i1', label:'Capacity & Type', detail:'2 TB (2.5-inch HDD)'},
+      {id:'g4i2', label:'Interface', detail:'USB 3.1 Gen 1 (USB 5Gbps) with micro USB to Type-A Cable'},
+      {id:'g4i3', label:'Operating Environment', detail:'Voltage: 5V'},
+      {id:'g4i4', label:'OS Compatibility', detail:'Microsoft Windows 7 or later, macOS 10.10 or later'},
+      {id:'g4i5', label:'Warranty', detail:'3-Year Limited Warranty'}
+    ]},
+    { id:'g5', product:'M.2 NVMe SSD (256 GB)', items:[
+      {id:'g5i1', label:'Brand & Origin', detail:'Any International Reputed Brand (Brand/Model/Country of Origin to be mentioned by bidder)'},
+      {id:'g5i2', label:'Capacity & Form Factor', detail:'256 GB'},
+      {id:'g5i3', label:'Flash Type & Interface', detail:'3D NAND Flash'},
+      {id:'g5i4', label:'Sequential Performance', detail:'Read Speed: Up to 3,500 MB/s; Write Speed: Up to 3,000 MB/s'},
+      {id:'g5i5', label:'Endurance (TBW)', detail:'284 TBW (Terabytes Written)'},
+      {id:'g5i6', label:'Dimensions', detail:'80 x 22 x 3.5 mm'},
+      {id:'g5i7', label:'Warranty', detail:'5-Year Manufacturing Warranty'}
+    ]},
+    { id:'g6', product:'Dual USB Pen Drive (128 GB)', items:[
+      {id:'g6i1', label:'Brand & Origin', detail:'Any International Reputed Brand (Brand/Model/Country of Origin to be mentioned by bidder)'},
+      {id:'g6i2', label:'Capacity', detail:'128 GB'},
+      {id:'g6i3', label:'Interface & Connectivity', detail:'Dual Connectors: USB Type-A & USB Type-C (Supports USB 2.0/3.0/3.1/3.2 & OTG)'},
+      {id:'g6i4', label:'Performance', detail:'Read Speed: Up to 130 MB/s; Write Speed: Up to 45 MB/s'},
+      {id:'g6i5', label:'Build & Design', detail:'Full Metal Shell (Dustproof, Anti-drop, Sturdy & Slim Body)'},
+      {id:'g6i6', label:'Color', detail:'Grey'},
+      {id:'g6i7', label:'OS Compatibility', detail:'Windows, macOS, Linux, Android (via OTG)'},
+      {id:'g6i8', label:'Warranty', detail:'5-Year Replacement Warranty (Replacement only, no repair)'}
+    ]},
+    { id:'g7', product:'Wired Optical Mouse', items:[
+      {id:'g7i1', label:'Brand & Origin', detail:'Any International Reputed Brand (Brand/Model/Country of Origin to be mentioned by bidder)'},
+      {id:'g7i2', label:'Device Type', detail:'USB Wired Optical Mouse'},
+      {id:'g7i3', label:'Connectivity', detail:'Wired USB 2.0 / USB 3.0 (Plug and Play)'},
+      {id:'g7i4', label:'Tracking Sensor & DPI', detail:'Optical Sensor with Minimum 1000 DPI'},
+      {id:'g7i5', label:'Button Count', detail:'Minimum 3 Buttons (Left click, Right click, Scroll wheel)'},
+      {id:'g7i6', label:'Cable Length', detail:'Minimum 1.5 Meters'},
+      {id:'g7i7', label:'Color', detail:'Black (Standard Business Color)'},
+      {id:'g7i8', label:'Warranty', detail:'Minimum 1-Year Full Replacement Warranty'}
+    ]},
+    { id:'g8', product:'Wired Keyboard', items:[
+      {id:'g8i1', label:'Brand & Origin', detail:'Globally recognized reputed brand (Brand, Model & Country of Origin to be specified by bidder)'},
+      {id:'g8i2', label:'Layout & Size', detail:'Standard Full-Size (100% Layout) with Dedicated Numeric Keypad (Minimum 104 Keys)'},
+      {id:'g8i3', label:'Connectivity', detail:'Wired USB with Plug-and-Play capability'},
+      {id:'g8i4', label:'Cable Length', detail:'Minimum 1.5 Meters (Durable PVC/Braided cable)'},
+      {id:'g8i5', label:'Keycap Printing', detail:'Standard US English layout (Laser-etched/permanently printed)'},
+      {id:'g8i6', label:'Ergonomics', detail:'Ergonomic design with adjustable tilt legs/feet'},
+      {id:'g8i7', label:'Indicators', detail:'LED indicators for Num Lock, Caps Lock, and Scroll Lock'},
+      {id:'g8i8', label:'OS Compatibility', detail:'Windows 10/11, Linux, macOS (No extra drivers required)'},
+      {id:'g8i9', label:'Certifications', detail:'CE, FCC, and RoHS compliant (Proof/certificates to be attached with bid)'},
+      {id:'g8i10', label:'Packaging', detail:'Individually packed in original manufacturer retail box with user manual'},
+      {id:'g8i11', label:'Warranty', detail:'Minimum 1-Year Comprehensive Replacement Warranty'}
+    ]}
+  ];
+
+  return { companies, tab1Rows, tab2Cols, tab3Groups, values: {}, sources: {} };
+}
+
+function loadState() {
+  try {
+    const raw = localStorage.getItem(STORAGE_KEY);
+    if (!raw) return defaultState();
+    const parsed = JSON.parse(raw);
+    if (!parsed.companies || !parsed.tab1Rows || !parsed.tab2Cols || !parsed.tab3Groups) return defaultState();
+    if (!parsed.sources) parsed.sources = {}; // backward-compat for data saved before source-tracing existed
+    return parsed;
+  } catch (e) {
+    return defaultState();
+  }
+}
+
+let state = loadState();
+
+const saveNote = document.getElementById('saveNote');
+let saveTimer = null;
+
+function persist() {
+  localStorage.setItem(STORAGE_KEY, JSON.stringify(state));
+  saveNote.textContent = '✓ সেভ হয়েছে — ' + new Date().toLocaleTimeString('bn-BD');
+  saveNote.classList.add('flash');
+  clearTimeout(saveTimer);
+  saveTimer = setTimeout(() => saveNote.classList.remove('flash'), 900);
+}
+
+function getVal(key) { return state.values[key] || ''; }
+function setVal(key, v) {
+  if (v) state.values[key] = v; else delete state.values[key];
+  persist();
+}
+
+/* Re-locate the source file (PDF or image) for a given cell (by its saved relative path) and open it in the viewer */
+async function traceSource(key) {
+  const src = state.sources[key];
+  if (!src) return;
+  const pathStr = (src.path || []).join(' / ');
+  const srcMode = src.mode || 'local'; // older saved entries (before mode-tagging existed) were always local
+  const srcName = (src.name || '').toLowerCase();
+  const srcIsImage = IMAGE_EXTS.some(e => srcName.endsWith('.' + e));
+
+  if (srcMode === 'server') {
+    // Server-linked files don't need a picked folder — just ask the server for them directly.
+    try {
+      currentMode = 'server';
+      if (srcIsImage) await openServerImage(src.path.join('/'), src.name);
+      else await openServerFile(src.path.join('/'), src.name);
+    } catch (err) {
+      alert('ফাইলটি সার্ভারে এখন পাওয়া যাচ্ছে না (রিনেম/মুভ/ডিলিট হয়ে থাকতে পারে)।\nসংরক্ষিত পাথ: ' + pathStr);
+    }
+    return;
+  }
+
+  // local mode
+  if (!rootHandle) {
+    alert('এই মার্কটা যেই ফাইল দেখে দেওয়া হয়েছিল:\n📄 ' + pathStr + '\n\nফাইলটা আবার খুলতে হলে আগে বাম পাশ থেকে "🖥️ লোকাল ফোল্ডার সিলেক্ট করুন" (রিকানেক্ট বা নতুন করে সিলেক্ট) লোড করুন।');
+    return;
+  }
+  try {
+    let handle = rootHandle;
+    for (let i = 0; i < src.path.length - 1; i++) {
+      handle = await handle.getDirectoryHandle(src.path[i]);
+    }
+    const fileHandle = await handle.getFileHandle(src.path[src.path.length - 1]);
+    if (srcIsImage) await openLocalImage(fileHandle);
+    else await openLocalFile(fileHandle);
+  } catch (err) {
+    alert('ফাইলটি এখন খুঁজে পাওয়া যাচ্ছে না (রিনেম/মুভ/ডিলিট হয়ে থাকতে পারে, অথবা ভিন্ন ফোল্ডার লোড করা আছে)।\nসংরক্ষিত পাথ: ' + pathStr);
+  }
+}
+
+function makeCell(key) {
+  const wrap = document.createElement('div');
+  wrap.style.display = 'flex';
+  wrap.style.alignItems = 'center';
+  wrap.style.justifyContent = 'center';
+  wrap.style.gap = '3px';
+
+  const sel = document.createElement('select');
+  sel.className = 'cell-select';
+  ['', 'Yes', 'No', 'N/A'].forEach(opt => {
+    const o = document.createElement('option');
+    o.value = opt; o.textContent = opt === '' ? '—' : opt;
+    sel.appendChild(o);
+  });
+  const v = getVal(key);
+  sel.value = v;
+  sel.setAttribute('data-v', v);
+
+  const linkBtn = document.createElement('button');
+  linkBtn.type = 'button';
+  linkBtn.className = 'trace-btn';
+  linkBtn.textContent = '🔗';
+  linkBtn.addEventListener('click', (e) => { e.stopPropagation(); traceSource(key); });
+
+  function refreshLinkBtn() {
+    const src = state.sources[key];
+    if (src) {
+      linkBtn.style.display = 'inline-block';
+      linkBtn.title = 'সোর্স ফাইল দেখুন: ' + (src.path || []).join('/');
+    } else {
+      linkBtn.style.display = 'none';
+    }
+  }
+  refreshLinkBtn();
+
+  sel.addEventListener('change', () => {
+    sel.setAttribute('data-v', sel.value);
+    setVal(key, sel.value);
+    if (sel.value && currentFilePath) {
+      // Tag this choice with the file that's currently open in the viewer
+      state.sources[key] = { path: currentFilePath.slice(), name: currentFileName, mode: currentMode };
+      persist();
+    } else if (!sel.value) {
+      delete state.sources[key];
+      persist();
+    }
+    refreshLinkBtn();
+  });
+
+  wrap.appendChild(sel);
+  wrap.appendChild(linkBtn);
+  return wrap;
+}
+
+/* ---- TAB 1: rows = forms, cols = companies ---- */
+function renderTab1() {
+  const wrap = document.getElementById('tab1Wrap');
+  wrap.innerHTML = '';
+  const table = document.createElement('table');
+  table.className = 'matrix';
+
+  const thead = document.createElement('thead');
+  const trh = document.createElement('tr');
+  const corner = document.createElement('th');
+  corner.className = 'corner rowlabel-head';
+  corner.textContent = 'Form / Document';
+  trh.appendChild(corner);
+  state.companies.forEach(co => {
+    const th = document.createElement('th');
+    th.textContent = co.name;
+    trh.appendChild(th);
+  });
+  thead.appendChild(trh);
+  table.appendChild(thead);
+
+  const tbody = document.createElement('tbody');
+  state.tab1Rows.forEach(row => {
+    const tr = document.createElement('tr');
+    const td0 = document.createElement('td');
+    td0.className = 'rowlabel';
+    td0.textContent = row.label;
+    const del = document.createElement('button');
+    del.className = 'del-btn'; del.textContent = '×'; del.title = 'সারি মুছে ফেলুন';
+    del.addEventListener('click', () => {
+      if (!confirm('এই সারিটি মুছে ফেলতে চান?')) return;
+      state.tab1Rows = state.tab1Rows.filter(r => r.id !== row.id);
+      Object.keys(state.values).forEach(k => { if (k.startsWith('tab1:' + row.id + ':')) delete state.values[k]; });
+      Object.keys(state.sources).forEach(k => { if (k.startsWith('tab1:' + row.id + ':')) delete state.sources[k]; });
+      persist(); renderTab1();
+    });
+    td0.appendChild(del);
+    tr.appendChild(td0);
+    state.companies.forEach(co => {
+      const td = document.createElement('td');
+      td.className = 'cell';
+      td.appendChild(makeCell(`tab1:${row.id}:${co.id}`));
+      tr.appendChild(td);
+    });
+    tbody.appendChild(tr);
+  });
+  table.appendChild(tbody);
+  wrap.appendChild(table);
+}
+
+/* ---- TAB 2: rows = companies, cols = documents ---- */
+function renderTab2() {
+  const wrap = document.getElementById('tab2Wrap');
+  wrap.innerHTML = '';
+  const table = document.createElement('table');
+  table.className = 'matrix';
+
+  const thead = document.createElement('thead');
+  const trh = document.createElement('tr');
+  const corner = document.createElement('th');
+  corner.className = 'corner rowlabel-head';
+  corner.textContent = 'Company Name';
+  trh.appendChild(corner);
+  state.tab2Cols.forEach(doc => {
+    const th = document.createElement('th');
+    th.textContent = doc.label;
+    const del = document.createElement('button');
+    del.className = 'del-btn'; del.textContent = '×'; del.title = 'কলাম মুছে ফেলুন';
+    del.style.display = 'block'; del.style.margin = '3px auto 0 auto';
+    del.addEventListener('click', () => {
+      if (!confirm('এই ডকুমেন্ট কলামটি মুছে ফেলতে চান?')) return;
+      state.tab2Cols = state.tab2Cols.filter(d => d.id !== doc.id);
+      Object.keys(state.values).forEach(k => { if (k.startsWith('tab2:') && k.endsWith(':' + doc.id)) delete state.values[k]; });
+      Object.keys(state.sources).forEach(k => { if (k.startsWith('tab2:') && k.endsWith(':' + doc.id)) delete state.sources[k]; });
+      persist(); renderTab2();
+    });
+    th.appendChild(del);
+    trh.appendChild(th);
+  });
+  thead.appendChild(trh);
+  table.appendChild(thead);
+
+  const tbody = document.createElement('tbody');
+  state.companies.forEach(co => {
+    const tr = document.createElement('tr');
+    const td0 = document.createElement('td');
+    td0.className = 'rowlabel';
+    td0.textContent = co.name;
+    tr.appendChild(td0);
+    state.tab2Cols.forEach(doc => {
+      const td = document.createElement('td');
+      td.className = 'cell';
+      td.appendChild(makeCell(`tab2:${co.id}:${doc.id}`));
+      tr.appendChild(td);
+    });
+    tbody.appendChild(tr);
+  });
+  table.appendChild(tbody);
+  wrap.appendChild(table);
+}
+
+/* ---- TAB 3: grouped rows (product > item), cols = companies ---- */
+function renderTab3() {
+  const wrap = document.getElementById('tab3Wrap');
+  wrap.innerHTML = '';
+  const table = document.createElement('table');
+  table.className = 'matrix';
+
+  const thead = document.createElement('thead');
+  const trh = document.createElement('tr');
+  const corner = document.createElement('th');
+  corner.className = 'corner rowlabel-head';
+  corner.textContent = 'Component / Spec';
+  trh.appendChild(corner);
+  state.companies.forEach(co => {
+    const th = document.createElement('th');
+    th.textContent = co.name;
+    trh.appendChild(th);
+  });
+  thead.appendChild(trh);
+  table.appendChild(thead);
+
+  const tbody = document.createElement('tbody');
+  state.tab3Groups.forEach(group => {
+    const grTr = document.createElement('tr');
+    grTr.className = 'group-row';
+    const grTd = document.createElement('td');
+    grTd.colSpan = state.companies.length + 1;
+    grTd.textContent = '📦 ' + group.product;
+    const delG = document.createElement('button');
+    delG.className = 'del-btn'; delG.textContent = '× গ্রুপ মুছুন';
+    delG.style.color = 'var(--danger)'; delG.style.fontSize='10.5px';
+    delG.addEventListener('click', () => {
+      if (!confirm('পুরো "' + group.product + '" গ্রুপ মুছে ফেলতে চান?')) return;
+      state.tab3Groups = state.tab3Groups.filter(g => g.id !== group.id);
+      Object.keys(state.values).forEach(k => { if (k.startsWith('tab3:' + group.id + ':')) delete state.values[k]; });
+      Object.keys(state.sources).forEach(k => { if (k.startsWith('tab3:' + group.id + ':')) delete state.sources[k]; });
+      persist(); renderTab3();
+    });
+    grTd.appendChild(delG);
+    grTr.appendChild(grTd);
+    tbody.appendChild(grTr);
+
+    group.items.forEach(item => {
+      const tr = document.createElement('tr');
+      const td0 = document.createElement('td');
+      td0.className = 'rowlabel';
+      td0.innerHTML = '';
+      td0.textContent = item.label;
+      const sub = document.createElement('span');
+      sub.className = 'sub';
+      sub.textContent = item.detail;
+      td0.appendChild(sub);
+      const del = document.createElement('button');
+      del.className = 'del-btn'; del.textContent = '×'; del.title = 'এই স্পেক সারি মুছুন';
+      del.addEventListener('click', () => {
+        if (!confirm('এই সারিটি মুছে ফেলতে চান?')) return;
+        group.items = group.items.filter(i => i.id !== item.id);
+        Object.keys(state.values).forEach(k => { if (k.startsWith(`tab3:${group.id}:${item.id}:`)) delete state.values[k]; });
+        Object.keys(state.sources).forEach(k => { if (k.startsWith(`tab3:${group.id}:${item.id}:`)) delete state.sources[k]; });
+        persist(); renderTab3();
+      });
+      td0.appendChild(del);
+      tr.appendChild(td0);
+      state.companies.forEach(co => {
+        const td = document.createElement('td');
+        td.className = 'cell';
+        td.appendChild(makeCell(`tab3:${group.id}:${item.id}:${co.id}`));
+        tr.appendChild(td);
+      });
+      tbody.appendChild(tr);
+    });
+
+    const addTr = document.createElement('tr');
+    const addTd = document.createElement('td');
+    addTd.colSpan = state.companies.length + 1;
+    const addLink = document.createElement('span');
+    addLink.className = 'add-link';
+    addLink.textContent = '+ "' + group.product + '"-এ স্পেক সারি যোগ করুন';
+    addLink.addEventListener('click', () => {
+      const label = prompt('স্পেক নাম (যেমন: RAM, Warranty):');
+      if (!label) return;
+      const detail = prompt('বিস্তারিত (optional):', '') || '';
+      group.items.push({ id: newId('it'), label, detail });
+      persist(); renderTab3();
+    });
+    addTd.appendChild(addLink);
+    addTr.appendChild(addTd);
+    tbody.appendChild(addTr);
+  });
+  table.appendChild(tbody);
+  wrap.appendChild(table);
+}
+
+function renderAll() { renderTab1(); renderTab2(); renderTab3(); }
+
+/* ---- Migration: add newly-introduced default product groups without touching existing saved data ---- */
+function ensureDefaultGroups() {
+  const seed = defaultState().tab3Groups;
+  let changed = false;
+  seed.forEach(seedGroup => {
+    const exists = state.tab3Groups.some(g => g.product.trim().toLowerCase() === seedGroup.product.trim().toLowerCase());
+    if (!exists) {
+      state.tab3Groups.push(JSON.parse(JSON.stringify(seedGroup)));
+      changed = true;
+    }
+  });
+  if (changed) persist();
+}
+ensureDefaultGroups();
+
+renderAll();
+
+/* ========================= EXCEL IMPORT ========================= */
+/* Reads an uploaded .xlsx workbook (any number of rows/columns — nothing here is
+   hardcoded to a fixed size) and rebuilds companies / tab1Rows / tab2Cols / tab3Groups
+   from it. Expected shape per sheet: first row = header (col 0 = a label, cols 1+ =
+   the "other axis"), each following row = one label + that row's values. */
+
+const VALUE_ALIASES = {
+  yes: 'Yes', y: 'Yes', '✓': 'Yes', '√': 'Yes', ok: 'Yes', pass: 'Yes',
+  no: 'No', n: 'No', '✗': 'No', x: 'No', fail: 'No',
+  'n/a': 'N/A', na: 'N/A', 'not applicable': 'N/A'
+};
+function normalizeValue(raw) {
+  const s = String(raw === undefined || raw === null ? '' : raw).trim().toLowerCase();
+  if (!s) return '';
+  return VALUE_ALIASES[s] || '';
+}
+
+function findSheet(workbook, keywords) {
+  const name = workbook.SheetNames.find(n => keywords.some(k => n.toLowerCase().includes(k)));
+  return name ? workbook.Sheets[name] : null;
+}
+
+function sheetToTrimmedAOA(ws) {
+  const aoa = XLSX.utils.sheet_to_json(ws, { header: 1, defval: '', raw: false });
+  // Drop fully-empty rows (some Excel exports leave trailing blank rows)
+  return aoa.filter(row => row.some(cell => String(cell).trim() !== ''));
+}
+
+/* companies live across all three sheets — build one deduped list, matched by
+   case-insensitive trimmed name, as each sheet is parsed. */
+function makeCompanyRegistry(existingCompanies) {
+  const list = existingCompanies ? existingCompanies.slice() : [];
+  return {
+    list,
+    get(name) {
+      const norm = String(name).trim();
+      if (!norm) return null;
+      let found = list.find(c => c.name.trim().toLowerCase() === norm.toLowerCase());
+      if (!found) {
+        found = { id: newId('co'), name: norm };
+        list.push(found);
+      }
+      return found;
+    }
+  };
+}
+
+/* Tab1 (Submission Checklist) / Tab2 (Document Checklist): both are a plain
+   "label row/col + companies col/row" matrix, just transposed from each other. */
+function parseFlatMatrixSheet(ws, registry, companiesAreColumns) {
+  const aoa = sheetToTrimmedAOA(ws);
+  if (aoa.length < 1) return { entries: [], labelIds: [] };
+  const header = aoa[0];
+  const labelIds = [];
+  const entries = []; // { labelId, label, values: { companyId: 'Yes'|'No'|'N/A' } }
+
+  if (companiesAreColumns) {
+    // header[1:] are company names; each data row is one checklist item
+    const companyCols = header.slice(1).map(name => registry.get(name));
+    aoa.slice(1).forEach(row => {
+      const label = String(row[0] || '').trim();
+      if (!label) return;
+      const id = newId('row');
+      labelIds.push({ id, label });
+      const values = {};
+      companyCols.forEach((co, i) => {
+        if (!co) return;
+        const v = normalizeValue(row[i + 1]);
+        if (v) values[co.id] = v;
+      });
+      entries.push({ labelId: id, values });
+    });
+  } else {
+    // header[1:] are document/column names; each data row is one company
+    const colLabels = header.slice(1).map(l => String(l || '').trim()).filter(Boolean);
+    colLabels.forEach(l => labelIds.push({ id: newId('col'), label: l }));
+    aoa.slice(1).forEach(row => {
+      const companyName = String(row[0] || '').trim();
+      if (!companyName) return;
+      const co = registry.get(companyName);
+      const values = {};
+      labelIds.forEach((col, i) => {
+        const v = normalizeValue(row[i + 1]);
+        if (v) values[col.id] = v;
+      });
+      entries.push({ companyId: co.id, values });
+    });
+  }
+  return { header, labelIds, entries };
+}
+
+/* Tab3 (Technical Compliance): single label column, cols 1+ = companies.
+   A row whose label has no second line (no "detail") starts a new product
+   group; a multi-line label ("name\ndetail...") is an item under the current
+   group. If items appear before any group header, they get a default group
+   named after the sheet. */
+function parseTechSheet(ws, registry, sheetName) {
+  const aoa = sheetToTrimmedAOA(ws);
+  if (aoa.length < 1) return { groups: [] };
+  const header = aoa[0];
+  const companyCols = header.slice(1).map(name => registry.get(name));
+
+  const groups = [];
+  let currentGroup = null;
+  aoa.slice(1).forEach(row => {
+    const raw = String(row[0] || '');
+    const lines = raw.split(/\r?\n/).map(l => l.trim()).filter(Boolean);
+    if (lines.length === 0) return;
+
+    if (lines.length === 1) {
+      // group header row
+      currentGroup = { id: newId('g'), product: lines[0], items: [] };
+      groups.push(currentGroup);
+      return;
+    }
+
+    if (!currentGroup) {
+      currentGroup = { id: newId('g'), product: sheetName, items: [] };
+      groups.push(currentGroup);
+    }
+    const item = { id: newId('it'), label: lines[0], detail: lines.slice(1).join(' '), values: {} };
+    companyCols.forEach((co, i) => {
+      if (!co) return;
+      const v = normalizeValue(row[i + 1]);
+      if (v) item.values[co.id] = v;
+    });
+    currentGroup.items.push(item);
+  });
+  return { groups };
+}
+
+function importWorkbook(workbook) {
+  const registry = makeCompanyRegistry([]);
+
+  const ws1 = findSheet(workbook, ['submission']);
+  const ws2 = findSheet(workbook, ['document']);
+  const ws3 = findSheet(workbook, ['technical', 'compliance', 'spec']);
+
+  const newState = { companies: [], tab1Rows: [], tab2Cols: [], tab3Groups: [], values: {}, sources: {} };
+
+  if (ws1) {
+    const parsed = parseFlatMatrixSheet(ws1, registry, true);
+    newState.tab1Rows = parsed.labelIds;
+    parsed.entries.forEach(e => {
+      Object.keys(e.values).forEach(coId => {
+        newState.values[`tab1:${e.labelId}:${coId}`] = e.values[coId];
+      });
+    });
+  }
+
+  if (ws2) {
+    const parsed = parseFlatMatrixSheet(ws2, registry, false);
+    newState.tab2Cols = parsed.labelIds;
+    parsed.entries.forEach(e => {
+      Object.keys(e.values).forEach(colId => {
+        newState.values[`tab2:${e.companyId}:${colId}`] = e.values[colId];
+      });
+    });
+  }
+
+  if (ws3) {
+    const sheetTitle = workbook.SheetNames.find(n => workbook.Sheets[n] === ws3) || 'Technical Compliance';
+    const parsed = parseTechSheet(ws3, registry, sheetTitle);
+    newState.tab3Groups = parsed.groups.map(g => ({
+      id: g.id, product: g.product,
+      items: g.items.map(it => ({ id: it.id, label: it.label, detail: it.detail }))
+    }));
+    parsed.groups.forEach(g => {
+      g.items.forEach(it => {
+        Object.keys(it.values).forEach(coId => {
+          newState.values[`tab3:${g.id}:${it.id}:${coId}`] = it.values[coId];
+        });
+      });
+    });
+  }
+
+  newState.companies = registry.list;
+  return { state: newState, foundSheets: { ws1: !!ws1, ws2: !!ws2, ws3: !!ws3 } };
+}
+
+function downloadSampleWorkbook() {
+  if (typeof XLSX === 'undefined') {
+    alert('Excel লাইব্রেরি লোড হতে পারেনি — ইন্টারনেট কানেকশন চেক করুন এবং আবার চেষ্টা করুন।');
+    return;
+  }
+  const companies = ['Hazi Traders', 'M/S MANIK TRADERS', 'M/s. Azim Enterprise'];
+
+  const sub = XLSX.utils.aoa_to_sheet([
+    ['From /Document', ...companies],
+    ['e-Tender Submission Letter (Form e-PG3A-1)', '', '', ''],
+    ['Tenderer Information Form (e-PG3A-2) - Part 1', '', '', ''],
+    ['Tenderer Information Form (e-PG3A-2) - Part 2', '', '', ''],
+    ['Technical Specifications and Compliance of Goods and related services (Form e-PG3A-5)', '', '', '']
+  ]);
+
+  const doc = XLSX.utils.aoa_to_sheet([
+    ['Company Name', 'General Experience Certificates', 'Valid Trade License', 'TIN Certificate'],
+    [companies[0], '', '', ''],
+    [companies[1], '', '', ''],
+    [companies[2], '', '', '']
+  ]);
+
+  // Demonstrates BOTH shapes the importer understands: a single-line row
+  // ("📦 ...") becomes a group header, a multi-line row ("name\ndetail")
+  // becomes an item under whichever group came before it.
+  const tech = XLSX.utils.aoa_to_sheet([
+    ['Component/Spec', ...companies],
+    ['📦 Desktop Computer', '', '', ''],
+    ['Processor\nIntel Core i5-14500 (14th Gen, 14 Cores, 20 Threads, 65W)', '', '', ''],
+    ['RAM\n8 GB DDR5 5600 MHz, expandable up to 128GB', '', '', ''],
+    ['📦 Duplex Printer', '', '', ''],
+    ['Print Speed\n40 PPM (Black)', '', '', ''],
+    ['Duplex Printing\nAutomatic', '', '', '']
+  ]);
+
+  const instructions = XLSX.utils.aoa_to_sheet([
+    ['নির্দেশনা (Instructions)'],
+    ['১. শীটের নামে "Submission", "Document", "Technical/Compliance" শব্দ থাকতে হবে (এই ৩টা শীট ঠিক এই নামেই আছে) — Import ফিচার নাম দেখে শীট খুঁজে নেয়।'],
+    ['২. সারি/কলাম সংখ্যা যতই হোক, সমস্যা নেই — শীটে যা আছে তাই পড়া হবে।'],
+    ['৩. Submission Checklist: ১ম কলামে ফর্ম/ডকুমেন্টের নাম, বাকি কলামে কোম্পানির নাম (হেডার সারিতে)।'],
+    ['৪. Document Checklist: ১ম কলামে কোম্পানির নাম, বাকি কলামে ডকুমেন্টের নাম (হেডার সারিতে)।'],
+    ['৫. Technical Compliance: ১ম কলামে স্পেক — একলাইনের টেক্সট হলে সেটা গ্রুপ-হেডার (📦) ধরা হবে, দুই-লাইনের টেক্সট (নাম তারপর নতুন লাইনে ডিটেইল) হলে সেটা আইটেম ধরা হবে।'],
+    ['৬. তিনটা শীটেই কোম্পানির নাম হুবহু এক বানানে লিখুন (case ইনসেনসিটিভ, কিন্তু স্পেসিং/শব্দ মিলতে হবে) — নাহলে দুটো আলাদা কোম্পানি হিসেবে ইম্পোর্ট হয়ে যাবে।'],
+    ['৭. Yes/No/N/A ভ্যালু আগে থেকে পূরণ করা থাকলে সেটাও ইম্পোর্ট হয়ে যাবে; খালি রাখলে খালি ইম্পোর্ট হবে।']
+  ]);
+  instructions['!cols'] = [{ wch: 100 }];
+
+  const wb = XLSX.utils.book_new();
+  XLSX.utils.book_append_sheet(wb, sub, 'Submission Checklist');
+  XLSX.utils.book_append_sheet(wb, doc, 'Document Checklist');
+  XLSX.utils.book_append_sheet(wb, tech, 'Technical Compliance');
+  XLSX.utils.book_append_sheet(wb, instructions, 'Instructions');
+  XLSX.writeFile(wb, 'tender-evaluation-sample.xlsx');
+}
+document.getElementById('sampleXlsxBtn').addEventListener('click', downloadSampleWorkbook);
+
+document.getElementById('importXlsxBtn').addEventListener('click', () => {
+  document.getElementById('importFileInput').click();
+});
+
+document.getElementById('importFileInput').addEventListener('change', async (e) => {
+  const file = e.target.files[0];
+  e.target.value = ''; // allow re-selecting the same file later
+  if (!file) return;
+  if (typeof XLSX === 'undefined') {
+    alert('Excel লাইব্রেরি লোড হতে পারেনি — ইন্টারনেট কানেকশন চেক করুন এবং আবার চেষ্টা করুন।');
+    return;
+  }
+  try {
+    const buf = await file.arrayBuffer();
+    const workbook = XLSX.read(buf, { type: 'array' });
+    const { state: importedState, foundSheets } = importWorkbook(workbook);
+
+    if (!foundSheets.ws1 && !foundSheets.ws2 && !foundSheets.ws3) {
+      alert('এই ফাইলে "Submission", "Document" বা "Technical/Compliance" নামের কোনো শীট পাওয়া যায়নি। শীটের নামগুলো একটু মিলিয়ে দেখুন।');
+      return;
+    }
+
+    const summary =
+      `কোম্পানি: ${importedState.companies.length}টি\n` +
+      `Submission Checklist সারি: ${importedState.tab1Rows.length}টি ${foundSheets.ws1 ? '' : '(শীট পাওয়া যায়নি)'}\n` +
+      `Document Checklist কলাম: ${importedState.tab2Cols.length}টি ${foundSheets.ws2 ? '' : '(শীট পাওয়া যায়নি)'}\n` +
+      `Technical Compliance গ্রুপ: ${importedState.tab3Groups.length}টি, মোট আইটেম: ${importedState.tab3Groups.reduce((s,g)=>s+g.items.length,0)}টি ${foundSheets.ws3 ? '' : '(শীট পাওয়া যায়নি)'}\n\n` +
+      `⚠️ এটা বর্তমান সব ইভ্যালুয়েশন ডেটা মুছে এই ইম্পোর্ট করা ডেটা দিয়ে বসাবে। এগোতে চান?`;
+
+    if (!confirm(summary)) return;
+
+    state = importedState;
+    persist();
+    renderAll();
+  } catch (err) {
+    alert('Excel ফাইল পড়তে সমস্যা হয়েছে: ' + err.message);
+  }
+});
+
+/* ---- Tabs switching ---- */
+document.querySelectorAll('.tab-btn').forEach(btn => {
+  btn.addEventListener('click', () => {
+    document.querySelectorAll('.tab-btn').forEach(b => b.classList.remove('active'));
+    document.querySelectorAll('.tab-content').forEach(c => c.classList.remove('active'));
+    btn.classList.add('active');
+    document.getElementById(btn.dataset.tab).classList.add('active');
+  });
+});
+
+/* ---- Toolbar actions ---- */
+document.getElementById('addCompanyBtn').addEventListener('click', () => {
+  const name = prompt('নতুন কোম্পানির নাম লিখুন:');
+  if (!name) return;
+  state.companies.push({ id: newId('co'), name });
+  persist(); renderAll();
+});
+
+document.getElementById('addFormRow').addEventListener('click', () => {
+  const label = prompt('নতুন ফর্ম/ডকুমেন্টের নাম লিখুন:');
+  if (!label) return;
+  state.tab1Rows.push({ id: newId('f'), label });
+  persist(); renderTab1();
+});
+
+document.getElementById('addDocCol').addEventListener('click', () => {
+  const label = prompt('নতুন ডকুমেন্টের নাম লিখুন:');
+  if (!label) return;
+  state.tab2Cols.push({ id: newId('d'), label });
+  persist(); renderTab2();
+});
+
+document.getElementById('addGroup').addEventListener('click', () => {
+  const product = prompt('নতুন প্রোডাক্ট/গ্রুপের নাম লিখুন:');
+  if (!product) return;
+  state.tab3Groups.push({ id: newId('g'), product, items: [] });
+  persist(); renderTab3();
+});
+
+/* ---- Build plain 2D arrays (header + rows) for each tab, for CSV/Excel export ---- */
+function buildTab1Rows() {
+  const header = ['Form / Document', ...state.companies.map(c => c.name)];
+  const rows = state.tab1Rows.map(row => [
+    row.label,
+    ...state.companies.map(co => getVal(`tab1:${row.id}:${co.id}`))
+  ]);
+  return [header, ...rows];
+}
+function buildTab2Rows() {
+  const header = ['Company Name', ...state.tab2Cols.map(d => d.label)];
+  const rows = state.companies.map(co => [
+    co.name,
+    ...state.tab2Cols.map(d => getVal(`tab2:${co.id}:${d.id}`))
+  ]);
+  return [header, ...rows];
+}
+function buildTab3Rows() {
+  const header = ['Product', 'Component / Category', 'Required Specification Details', ...state.companies.map(c => c.name)];
+  const rows = [];
+  state.tab3Groups.forEach(group => {
+    group.items.forEach(item => {
+      rows.push([
+        group.product,
+        item.label,
+        item.detail,
+        ...state.companies.map(co => getVal(`tab3:${group.id}:${item.id}:${co.id}`))
+      ]);
+    });
+  });
+  return [header, ...rows];
+}
+
+function csvEscape(val) {
+  const s = (val === undefined || val === null) ? '' : String(val);
+  if (/[",\n]/.test(s)) return '"' + s.replace(/"/g, '""') + '"';
+  return s;
+}
+function arrayToCsvBlock(title, aoa) {
+  const lines = [`=== ${title} ===`];
+  aoa.forEach(row => lines.push(row.map(csvEscape).join(',')));
+  return lines.join('\r\n');
+}
+
+document.getElementById('exportCsvBtn').addEventListener('click', () => {
+  const blockA = arrayToCsvBlock('Submission Checklist', buildTab1Rows());
+  const blockB = arrayToCsvBlock('Document Checklist', buildTab2Rows());
+  const blockC = arrayToCsvBlock('Technical Compliance', buildTab3Rows());
+  const csv = [blockA, blockB, blockC].join('\r\n\r\n');
+  const blob = new Blob(['\uFEFF' + csv], { type: 'text/csv;charset=utf-8;' });
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement('a');
+  a.href = url; a.download = 'tender-evaluation-checklist.csv';
+  a.click();
+  URL.revokeObjectURL(url);
+});
+
+document.getElementById('exportXlsxBtn').addEventListener('click', () => {
+  if (typeof XLSX === 'undefined') {
+    alert('Excel এক্সপোর্ট লাইব্রেরি লোড হতে পারেনি — ইন্টারনেট কানেকশন চেক করুন এবং আবার চেষ্টা করুন।');
+    return;
+  }
+  const wb = XLSX.utils.book_new();
+  const ws1 = XLSX.utils.aoa_to_sheet(buildTab1Rows());
+  const ws2 = XLSX.utils.aoa_to_sheet(buildTab2Rows());
+  const ws3 = XLSX.utils.aoa_to_sheet(buildTab3Rows());
+  XLSX.utils.book_append_sheet(wb, ws1, 'Submission Checklist');
+  XLSX.utils.book_append_sheet(wb, ws2, 'Document Checklist');
+  XLSX.utils.book_append_sheet(wb, ws3, 'Technical Compliance');
+  XLSX.writeFile(wb, 'tender-evaluation-checklist.xlsx');
+});
+
+document.getElementById('resetBtn').addEventListener('click', () => {
+  if (!confirm('সব ইভ্যালুয়েশন ডেটা মুছে ডিফল্টে ফিরে যেতে চান? এটি Undo করা যাবে না।')) return;
+  localStorage.removeItem(STORAGE_KEY);
+  state = defaultState();
+  persist();
+  renderAll();
+});
+
+/* ========================= DRAGGABLE / COLLAPSIBLE SIDE PANELS ========================= */
+(function initResizablePanels() {
+  const LAYOUT_KEY = 'folderExplorerLayout_v1';
+  const sidebar = document.getElementById('sidebar');
+  const evalpanel = document.getElementById('evalpanel');
+  const resizerLeft = document.getElementById('resizerLeft');
+  const resizerRight = document.getElementById('resizerRight');
+  const toggleLeft = document.getElementById('toggleLeft');
+  const toggleRight = document.getElementById('toggleRight');
+
+  const DEFAULTS = { sidebarWidth: 280, sidebarCollapsed: false, evalWidth: 520, evalCollapsed: false };
+  const SIDEBAR_MIN = 200, SIDEBAR_MAX_RATIO = 0.5;
+  const EVAL_MIN = 340, EVAL_MAX_RATIO = 0.65;
+
+  function loadLayout() {
+    try {
+      const raw = localStorage.getItem(LAYOUT_KEY);
+      if (!raw) return { ...DEFAULTS };
+      return { ...DEFAULTS, ...JSON.parse(raw) };
+    } catch (e) { return { ...DEFAULTS }; }
+  }
+  function saveLayout(patch) {
+    const current = loadLayout();
+    localStorage.setItem(LAYOUT_KEY, JSON.stringify({ ...current, ...patch }));
+  }
+
+  function setCollapsed(panel, toggleBtn, collapsed, openArrow, closeArrow, widthKey, restoreWidth) {
+    panel.classList.toggle('collapsed', collapsed);
+    if (!collapsed) {
+      panel.style.width = restoreWidth + 'px';
+    }
+    toggleBtn.textContent = collapsed ? closeArrow : openArrow;
+    const patch = {};
+    patch[widthKey + 'Collapsed'] = collapsed;
+    saveLayout(patch);
+  }
+
+  /* ---- restore saved layout on load ---- */
+  const layout = loadLayout();
+  sidebar.style.width = layout.sidebarWidth + 'px';
+  evalpanel.style.width = layout.evalWidth + 'px';
+  if (layout.sidebarCollapsed) {
+    sidebar.classList.add('collapsed');
+    toggleLeft.textContent = '▶';
+  }
+  if (layout.evalCollapsed) {
+    evalpanel.classList.add('collapsed');
+    toggleRight.textContent = '◀';
+  }
+
+  /* ---- collapse / expand toggles ---- */
+  toggleLeft.addEventListener('click', (e) => {
+    e.stopPropagation();
+    const l = loadLayout();
+    setCollapsed(sidebar, toggleLeft, !sidebar.classList.contains('collapsed'), '◀', '▶', 'sidebar', l.sidebarWidth || DEFAULTS.sidebarWidth);
+  });
+  toggleRight.addEventListener('click', (e) => {
+    e.stopPropagation();
+    const l = loadLayout();
+    setCollapsed(evalpanel, toggleRight, !evalpanel.classList.contains('collapsed'), '▶', '◀', 'eval', l.evalWidth || DEFAULTS.evalWidth);
+  });
+
+  /* ---- drag-to-resize ---- */
+  function makeDraggable(handle, panel, growsWithPositiveDelta, minWidth, maxRatio, widthKey) {
+    handle.addEventListener('mousedown', (e) => {
+      if (e.target === handle.querySelector('.resizer-toggle')) return; // clicking the toggle shouldn't start a drag
+      if (panel.classList.contains('collapsed')) return; // reopen via toggle first
+      e.preventDefault();
+      const startX = e.clientX;
+      const startWidth = panel.getBoundingClientRect().width;
+      document.body.classList.add('no-transition');
+      document.body.style.cursor = 'col-resize';
+      document.body.style.userSelect = 'none';
+      handle.classList.add('dragging');
+
+      function onMove(ev) {
+        let delta = ev.clientX - startX;
+        if (!growsWithPositiveDelta) delta = -delta;
+        const maxWidth = window.innerWidth * maxRatio;
+        let newWidth = Math.max(minWidth, Math.min(maxWidth, startWidth + delta));
+        panel.style.width = newWidth + 'px';
+      }
+      function onUp() {
+        document.removeEventListener('mousemove', onMove);
+        document.removeEventListener('mouseup', onUp);
+        document.body.classList.remove('no-transition');
+        document.body.style.cursor = '';
+        document.body.style.userSelect = '';
+        handle.classList.remove('dragging');
+        const patch = {};
+        patch[widthKey] = parseInt(panel.style.width, 10);
+        saveLayout(patch);
+      }
+      document.addEventListener('mousemove', onMove);
+      document.addEventListener('mouseup', onUp);
+    });
+  }
+
+  makeDraggable(resizerLeft, sidebar, true, SIDEBAR_MIN, SIDEBAR_MAX_RATIO, 'sidebarWidth');
+  makeDraggable(resizerRight, evalpanel, false, EVAL_MIN, EVAL_MAX_RATIO, 'evalWidth');
+})();
+</script>
+
+</body>
+</html>
